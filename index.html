@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ward Notebook">
+<meta name="theme-color" content="#1f6feb">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Ward Notebook</title>
+<link href="https://fonts.googleapis.com/css2?family=Caveat&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#6b7685;--line:#d9dee6;--acc:#1f6feb;--danger:#c0392b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161c;--card:#1b222b;--ink:#e8edf3;--mute:#93a0b1;--line:#2d3744;--acc:#5b9dff;--danger:#ff7b6b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12161c;--card:#1b222b;--ink:#e8edf3;--mute:#93a0b1;--line:#2d3744;--acc:#5b9dff;--danger:#ff7b6b;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
+h1{font-size:18px;margin:0;flex:1}
+button,select,input{font:inherit;color:var(--ink)}
+button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+button.d{color:var(--danger)}
+main{display:grid;grid-template-columns:260px 1fr;gap:12px;padding:12px;max-width:1100px;margin:auto}
+@media(max-width:700px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+#search{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);margin-bottom:8px}
+#list{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto}
+.row{padding:8px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer}
+.row.on{border-color:var(--acc);background:var(--bg)}
+.row small{color:var(--mute);display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+label{font-size:12px;color:var(--mute);display:block}
+.grid input,.grid select{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.bar{display:flex;gap:6px;align-items:center;margin:10px 0 6px;flex-wrap:wrap}
+.sw{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);padding:0}
+.sw.on{border-color:var(--acc)}
+#pad{width:100%;height:340px;border:1px solid var(--line);border-radius:10px;background:#fff;touch-action:none;display:block}
+.muted{color:var(--mute);font-size:13px}
+.sec textarea{width:100%;min-height:110px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);resize:vertical}
+.sec .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.mic{padding:4px 10px;font-size:13px}
+.mic.rec{background:var(--danger);border-color:var(--danger);color:#fff}
+.empty{padding:40px 10px;text-align:center;color:var(--mute)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ward Notebook</h1>
+  <button class="p" id="new">+ New patient</button>
+  <button id="exp">Export</button>
+</header>
+<main>
+  <section class="card">
+    <input id="search" placeholder="Search by ID, bed, or diagnosis" type="search">
+    <div id="list"></div>
+  </section>
+  <section class="card" id="editor"></section>
+</main>
+<script>
+(function(){
+var KEY="wardnotebook.v1", pts=[], cur=null, color="#111111", erase=false;
+function load(){try{pts=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){pts=[]}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(pts))}catch(e){alert("Couldn’t save: storage is full or blocked. Use Export to back up.")}}
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s||"").replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+
+function renderList(){
+  var q=$("search").value.toLowerCase(), box=$("list"); box.innerHTML="";
+  var f=pts.filter(function(p){return (p.pid+" "+p.bed+" "+p.dx).toLowerCase().indexOf(q)>-1});
+  if(!f.length){box.innerHTML='<div class="empty">No patients yet.</div>';return}
+  f.forEach(function(p){
+    var d=document.createElement("div"); d.className="row"+(cur===p.id?" on":"");
+    d.innerHTML="<b>"+esc(p.pid||"Unnamed")+"</b><small>"+esc(p.bed||"No bed")+" · "+esc(p.dx||"No diagnosis")+"</small>";
+    d.onclick=function(){cur=p.id;renderList();renderEditor()};
+    box.appendChild(d);
+  });
+}
+
+function renderEditor(){
+  if(rec){try{rec.stop()}catch(e){}}
+  var ed=$("editor"), p=pts.filter(function(x){return x.id===cur})[0];
+  if(!p){ed.innerHTML='<div class="empty">Select a patient or add a new one.</div>';return}
+  var statuses=["Admitted","Stable","Watch","Critical","Discharge planned","Discharged"];
+  ed.innerHTML=
+   '<div class="grid">'+
+   '<div><label>Patient ID / initials</label><input id="f_pid" value="'+esc(p.pid)+'"></div>'+
+   '<div><label>Age</label><input id="f_age" inputmode="numeric" value="'+esc(p.age)+'"></div>'+
+   '<div><label>Sex</label><select id="f_sex"><option></option><option>F</option><option>M</option><option>Other</option></select></div>'+
+   '<div><label>Ward / bed</label><input id="f_bed" value="'+esc(p.bed)+'"></div>'+
+   '<div><label>Admitted</label><input id="f_adm" type="date" value="'+esc(p.adm)+'"></div>'+
+   '<div><label>Status</label><select id="f_st">'+statuses.map(function(s){return "<option>"+s+"</option>"}).join("")+'</select></div>'+
+   '</div>'+
+   '<div style="margin-top:8px"><label>Diagnosis / problem</label><div class="grid" style="grid-template-columns:1fr"><input id="f_dx" value="'+esc(p.dx)+'"></div></div>'+
+   '<div class="grid" style="margin-top:10px">'+SECS.map(function(s){return sec(s[0],s[1],p[s[0]])}).join("")+'</div>'+
+   '<div class="bar"><span class="muted">Handwritten notes</span><span style="flex:1"></span>'+
+   '<button class="sw on" data-c="#111111" style="background:#111"></button>'+
+   '<button class="sw" data-c="#1f6feb" style="background:#1f6feb"></button>'+
+   '<button class="sw" data-c="#d0342c" style="background:#d0342c"></button>'+
+   '<button class="mic" id="mi">🎤 Dictate</button><button id="er">Eraser</button><button id="cl" class="d">Clear</button></div>'+
+   '<canvas id="pad"></canvas>'+
+   '<div class="bar"><span class="muted" id="ts"></span><span style="flex:1"></span><button class="d" id="del">Delete patient</button></div>';
+  $("f_sex").value=p.sex||""; $("f_st").value=p.st||"Admitted";
+  ["pid","age","bed","adm","dx"].forEach(function(k){$("f_"+k).oninput=function(){p[k]=this.value;touch(p);renderList()}});
+  $("f_sex").onchange=function(){p.sex=this.value;touch(p)};
+  $("f_st").onchange=function(){p.st=this.value;touch(p)};
+  SECS.forEach(function(s){var k=s[0],ta=$("t_"+k);ta.oninput=function(){p[k]=this.value;touch(p)};$("m_"+k).onclick=function(){dictate(this,ta,p,k)}});
+  ts(p); setupPad(p);
+  Array.prototype.forEach.call(ed.querySelectorAll(".sw"),function(b){b.onclick=function(){
+    color=b.dataset.c;erase=false;$("er").style.background="";
+    Array.prototype.forEach.call(ed.querySelectorAll(".sw"),function(x){x.classList.remove("on")});b.classList.add("on")}});
+  $("mi").onclick=function(){if(document.fonts)document.fonts.load("26px Caveat");dictate(this,null,p,"ink")};
+  $("er").onclick=function(){erase=!erase;this.style.background=erase?"var(--line)":""};
+  $("cl").onclick=function(){if(confirm("Clear handwritten notes?")){p.ink="";p.ty=0;touch(p);setupPad(p)}};
+  $("del").onclick=function(){if(confirm("Delete this patient?")){pts=pts.filter(function(x){return x!==p});cur=null;save();renderList();renderEditor()}};
+}
+function ts(p){var e=$("ts");if(e)e.textContent=p.upd?"Saved "+new Date(p.upd).toLocaleString():""}
+function touch(p){p.upd=Date.now();save();ts(p)}
+
+function setupPad(p){
+  var c=$("pad"), r=c.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  c.width=r.width*dpr; c.height=r.height*dpr;
+  var x=c.getContext("2d"); x.scale(dpr,dpr); x.lineCap="round"; x.lineJoin="round";
+  x.fillStyle="#fff"; x.fillRect(0,0,r.width,r.height);
+  if(p.ink){var im=new Image();im.onload=function(){x.drawImage(im,0,0,r.width,r.height)};im.src=p.ink}
+  var drawing=false,lx=0,ly=0,timer=null;
+  function pos(e){var b=c.getBoundingClientRect();return[e.clientX-b.left,e.clientY-b.top]}
+  c.onpointerdown=function(e){drawing=true;c.setPointerCapture(e.pointerId);var a=pos(e);lx=a[0];ly=a[1];seg(e,lx,ly)};
+  c.onpointermove=function(e){if(!drawing)return;var a=pos(e);seg(e,a[0],a[1]);lx=a[0];ly=a[1]};
+  function end(){if(!drawing)return;drawing=false;clearTimeout(timer);timer=setTimeout(function(){p.ink=c.toDataURL("image/jpeg",0.7);touch(p)},300)}
+  c.onpointerup=end;c.onpointercancel=end;
+  function seg(e,nx,ny){
+    var w=e.pointerType==="pen"?Math.max(1,(e.pressure||0.5)*4.5):2.2;
+    x.strokeStyle=erase?"#fff":color; x.lineWidth=erase?18:w;
+    x.beginPath();x.moveTo(lx,ly);x.lineTo(nx+0.01,ny);x.stroke();
+  }
+}
+
+var SECS=[["inv","Investigations"],["fnd","Findings"],["adv","Advice / plan"],["hx","Other history"]];
+function writeInk(p,t){
+  var c=$("pad");if(!c)return;
+  var r=c.getBoundingClientRect(),x=c.getContext("2d"),lh=34,m=14,y=p.ty||34;
+  x.font="26px Caveat,'Bradley Hand','Segoe Script',cursive";x.fillStyle=erase?"#111111":color;x.textBaseline="alphabetic";
+  var words=t.split(/\s+/),line="",full="The pad is full. Clear it, or use the text boxes below.";
+  function flush(){if(y>r.height-8)return false;x.fillText(line,m,y);y+=lh;line="";return true}
+  for(var i=0;i<words.length;i++){
+    var test=line?line+" "+words[i]:words[i];
+    if(x.measureText(test).width>r.width-2*m&&line){if(!flush()){alert(full);return}line=words[i]}else line=test;
+  }
+  if(line&&!flush()){alert(full);return}
+  p.ty=y;p.ink=c.toDataURL("image/jpeg",0.7);touch(p);
+}
+var rec=null,recBtn=null;
+function sec(k,label,val){return '<div class="sec"><div class="hd"><label>'+label+'</label><button class="mic" id="m_'+k+'">🎤 Dictate</button></div><textarea id="t_'+k+'">'+esc(val)+'</textarea></div>'}
+function dictate(btn,ta,p,k){
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){alert("Voice typing isn’t supported in this browser. Try Chrome or Safari, or use the mic key on your keyboard.");return}
+  if(rec){var same=(recBtn===btn);try{rec.stop()}catch(e){}if(same)return}
+  rec=new SR();recBtn=btn;rec.continuous=true;rec.interimResults=false;rec.lang=navigator.language||"en-US";
+  rec.onresult=function(e){
+    for(var i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal){
+      var t=e.results[i][0].transcript.trim();
+      if(!ta){writeInk(p,t);continue}
+      ta.value=(ta.value&&!/\s$/.test(ta.value)?ta.value+" ":ta.value)+t;
+      p[k]=ta.value;touch(p)}}
+  };
+  rec.onend=function(){btn.classList.remove("rec");btn.textContent="🎤 Dictate";rec=null;recBtn=null};
+  rec.onerror=function(e){if(e.error==="not-allowed"||e.error==="service-not-allowed")alert("Microphone access is blocked. Allow it in your browser settings.")};
+  btn.classList.add("rec");btn.textContent="⏹ Stop";
+  try{rec.start()}catch(e){}
+}
+$("new").onclick=function(){
+  var p={id:"p"+Date.now(),pid:"",age:"",sex:"",bed:"",adm:new Date().toISOString().slice(0,10),st:"Admitted",dx:"",ink:"",upd:Date.now()};
+  pts.unshift(p);cur=p.id;save();renderList();renderEditor();
+};
+$("search").oninput=renderList;
+$("exp").onclick=function(){
+  var rows=[["ID","Age","Sex","Bed","Admitted","Status","Diagnosis"]].concat(pts.map(function(p){return[p.pid,p.age,p.sex,p.bed,p.adm,p.st,p.dx]}));
+  var csv=rows.map(function(r){return r.map(function(v){return '"'+String(v||"").replace(/"/g,'""')+'"'}).join(",")}).join("\n");
+  var w=window.open("","_blank");
+  if(w){w.document.write("<pre>"+esc(csv)+"</pre>");w.document.close()}else{alert("Pop-up blocked. Allow pop-ups to view the export.")}
+};
+load();renderList();renderEditor();
+})();
+</script>
+<script>if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(){})})}</script>
+</body>
+</html>
